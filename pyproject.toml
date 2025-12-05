@@ -1,0 +1,11 @@
+[project]
+name = "adpeek-cli"
+version = "0.0.1"
+description = "A lightweight Active Directory enumeration and ACL helper over LDAP."
+authors = [{ name = "0xUnd3adBeef" }]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = ["ldap3"]
+
+[project.scripts]
+adpeek = "adpeek.cli:main"

@@ -1,6 +1,6 @@
 # AdPeek
 ![image](AdPeekIMG.png)
-Need Active Directory intel? Just take a peek !
+
 
 AdPeek is a small Python tool for extracting useful information from Active Directory over LDAP.
 It focuses on fast enumeration and identifying misconfigured ACL paths without requiring a database or GUI.

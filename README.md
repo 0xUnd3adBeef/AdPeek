@@ -22,6 +22,65 @@ Output is minimal and designed for quick consumption during reconnaissance.
 
 ---
 
+## Installation
+
+### **Using `pipx` (recommended)**
+
+`pipx` installs AdPeek in an isolated environment and exposes the `adpeek` command globally.
+
+```bash
+pipx install adpeek-cli
+```
+
+After installation, run:
+
+```bash
+adpeek --help
+```
+
+---
+
+### **Using `pip` (not recommended, works too)**
+
+```bash
+python3 -m pip install --user adpeek-cli
+```
+
+Make sure `~/.local/bin` is on your PATH:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+---
+
+### **Upgrade to the latest version**
+
+```bash
+pipx upgrade adpeek-cli
+```
+
+or:
+
+```bash
+python3 -m pip install --upgrade adpeek-cli
+```
+
+---
+
+### **Uninstall**
+
+```bash
+pipx uninstall adpeek-cli
+```
+
+or:
+
+```bash
+python3 -m pip uninstall adpeek-cli
+```
+
+---
 ## Usage
 
 ```

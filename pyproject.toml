@@ -1,6 +1,6 @@
 [project]
 name = "adpeek-cli"
-version = "0.0.1"
+version = "0.1.1"
 description = "A lightweight Active Directory enumeration and ACL helper over LDAP."
 authors = [{ name = "0xUnd3adBeef" }]
 readme = "README.md"

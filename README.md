@@ -1,5 +1,5 @@
 # AdPeek
-![[AdPeekIMG.png]]
+![image](AdPeekIMG.png)
 Need Active Directory intel? Just take a peek !
 
 AdPeek is a small Python tool for extracting useful information from Active Directory over LDAP.

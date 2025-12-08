@@ -12,7 +12,7 @@ import uuid
 from collections import defaultdict, deque
 import json
 
-BANNER = "AdPeek v0.1.2 - Brough to you by 0xUnd3adBeef\n"
+BANNER = "AdPeek v0.1.2 - Brought to you by 0xUnd3adBeef\n"
 print(BANNER)
 
 # ---------- general helpers ----------

@@ -13,7 +13,7 @@ from collections import defaultdict, deque
 # adpeek/cli.py
 from . import __version__
 
-BANNER = f"AdPeek v{__version__} - Made by 0xUnd3adBeef\n"
+BANNER = f"AdPeek v{__version__} - Brought to you by 0xUnd3adBeef\n"
 print(BANNER)
 
 

@@ -8,7 +8,16 @@ It focuses on fast enumeration and identifying misconfigured ACL paths without r
 Current version: `v0.1.1`
 
 ---
+## Why AdPeek?
 
+AdPeek is built for operators who want quick, effective AD intelligence without dragging around heavy tooling. It delivers the essentials:\
+Fast LDAP enumeration of users, machines, SPNs, and AS-REP roastables\
+Direct ACL checks that show escalation paths like WriteDACL, WriteOwner, password-reset rights, RBCD, and Shadow Credentials\
+Inbound/outbound access checks to show who a target can control and who can control them\
+Output that’s short and immediately useful\
+AdPeek aims to keep things simple.
+
+---
 ## Features
 
 * Enumerate domain users

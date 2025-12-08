@@ -1115,9 +1115,7 @@ def findinboundacl(args):
             search_scope=SUBTREE,
             attributes=["sAMAccountName", "objectClass", "objectSid"],
         )
-#        print(f"[DEBUG] SID lookup code   = {conn.result.get('result')}")
-#        print(f"[DEBUG] SID lookup desc   = {conn.result.get('description')}")
-#        print(f"[DEBUG] SID lookup entries= {len(conn.entries)}")
+
 
         if not conn.entries:
             return None

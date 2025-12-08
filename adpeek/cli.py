@@ -16,6 +16,7 @@ from . import __version__
 BANNER = f"AdPeek v{__version__} - Made by 0xUnd3adBeef\n"
 print(BANNER)
 
+
 # ---------- general helpers ----------
 
 def sid_to_string(sid_value):
@@ -1050,7 +1051,7 @@ def findinboundacl(args):
           -u owneduser -p 'Pass' -tu CT059
 
       Output (conceptually):
-        SOMEGROUP -> GenericAll,ResetPassword -> INLANEFREIGHT\\CT059
+        SOMEGROUP -> GenericAll,ResetPassword -> INLANEFREIGHT\CT059
     """
 
     conn, netbios_domain = connect_to_ad(args.domain, args.dc, args.username, args.password)
@@ -1063,121 +1064,145 @@ def findinboundacl(args):
         print("[ - ] Could not determine base DN from RootDSE")
         return
 
-    # 1) Build SID -> DN + minimal node metadata (user/group/machine)
-    from collections import defaultdict
+    print(f"[DEBUG] base_dn          = {base_dn}")
 
+    # cache from SID bytes -> DN
     sid_to_dn = {}
+    # minimal metadata for pretty-printing
     nodes = {}
 
-    principal_filter = "(|(objectClass=user)(objectClass=group)(objectClass=computer))"
-    conn.search(
-        search_base=base_dn,
-        search_filter=principal_filter,
-        search_scope=SUBTREE,
-        attributes=["sAMAccountName", "objectSid", "objectClass"],
-    )
-
-    for entry in conn.entries:
+    def remember_entry(entry):
         dn = entry.entry_dn
         obj_classes = [c.lower() for c in entry["objectClass"].values] if "objectClass" in entry else []
-
         if "group" in obj_classes:
             kind = "GROUP"
         elif "computer" in obj_classes:
             kind = "MACHINE"
         else:
             kind = "USER"
-
         sam = entry["sAMAccountName"].value if "sAMAccountName" in entry else None
-        nodes[dn] = {"type": kind, "sam": sam}
-
-        sid_val = entry["objectSid"].value if "objectSid" in entry else None
-        if sid_val is not None:
-            try:
-                sid_bytes = bytes(sid_val)
-            except TypeError:
-                try:
-                    sid_bytes = sid_string_to_bytes(sid_val)
-                except Exception:
-                    sid_bytes = None
-            if sid_bytes:
-                sid_to_dn[sid_bytes] = dn
-
-    # 2) Resolve targets: -tu / -tg / -tm (each can be comma-separated)
-    target_dns = []
-
-    if args.target_users:
-        for raw in args.target_users.split(","):
-            name = raw.strip()
-            if not name:
-                continue
-            resolved = resolve_single_principal(conn, base_dn, name, preferred_kind="USER")
-            if not resolved:
-                print(f"[ - ] USER '{name}' not found in domain (no sAMAccountName match)")
-                continue
-            dn, kind, sam = resolved
-            nodes.setdefault(dn, {"type": kind, "sam": sam})
-            target_dns.append(dn)
-
-    if args.target_groups:
-        for raw in args.target_groups.split(","):
-            name = raw.strip()
-            if not name:
-                continue
-            resolved = resolve_single_principal(conn, base_dn, name, preferred_kind="GROUP")
-            if not resolved:
-                print(f"[ - ] GROUP '{name}' not found in domain (no sAMAccountName match)")
-                continue
-            dn, kind, sam = resolved
-            nodes.setdefault(dn, {"type": kind, "sam": sam})
-            target_dns.append(dn)
-
-    if args.target_machines:
-        for raw in args.target_machines.split(","):
-            name = raw.strip()
-            if not name:
-                continue
-            resolved = resolve_single_principal(conn, base_dn, name, preferred_kind="MACHINE")
-            if not resolved:
-                print(f"[ - ] MACHINE '{name}' not found in domain (no sAMAccountName match)")
-                continue
-            dn, kind, sam = resolved
-            nodes.setdefault(dn, {"type": kind, "sam": sam})
-            target_dns.append(dn)
-
-    if not target_dns:
-        print("[ - ] No valid target principals resolved (use -tu / -tg / -tm)")
-        return
+        if dn not in nodes:
+            nodes[dn] = {"type": kind, "sam": sam}
+        return dn, kind, sam
 
     def format_node(dn):
         meta = nodes.get(dn, {"type": "UNKNOWN", "sam": None})
         kind = meta["type"]
         sam = meta["sam"]
         if kind == "USER":
-            if sam:
-                return f"{netbios_domain}\\{sam}"
-            return f"USER:{dn}"
-        elif kind == "GROUP":
-            if sam:
-                return f"GROUP:{sam}"
-            return f"GROUP:{dn}"
-        elif kind == "MACHINE":
-            if sam:
-                return f"{netbios_domain}\\{sam}"
-            return f"MACHINE:{dn}"
-        else:
+            return f"{netbios_domain}\\{sam}" if sam else f"USER:{dn}"
+        if kind == "MACHINE":
+            return f"{netbios_domain}\\{sam}" if sam else f"MACHINE:{dn}"
+        if kind == "GROUP":
+            return f"GROUP:{sam}" if sam else f"GROUP:{dn}"
+        return dn
+
+    def dn_for_sid_bytes(sid_bytes):
+        # fast path: already cached
+        dn = sid_to_dn.get(sid_bytes)
+        if dn:
             return dn
 
-    # 3) For each target, fetch its DACL and list inbound rights
-    from ldap3 import SUBTREE
-    from ldap3.protocol.microsoft import security_descriptor_control
+        # try converting to string SID and doing a targeted LDAP lookup
+        try:
+            sid_str = sid_to_string(sid_bytes)
+        except Exception:
+            return None
 
+        sid_filter = f"(objectSid={sid_str})"
+        print(f"[DEBUG] SID lookup filter = {sid_filter}")
+        conn.search(
+            search_base=base_dn,
+            search_filter=sid_filter,
+            search_scope=SUBTREE,
+            attributes=["sAMAccountName", "objectClass", "objectSid"],
+        )
+
+
+        if not conn.entries:
+            return None
+
+        entry = conn.entries[0]
+        dn, kind, sam = remember_entry(entry)
+
+        # normalise and cache SID for future fast matches
+        sid_val = entry["objectSid"].value if "objectSid" in entry else None
+        if sid_val is not None:
+            if isinstance(sid_val, str):
+                cache_sid_bytes = sid_string_to_bytes(sid_val)
+            else:
+                cache_sid_bytes = bytes(sid_val)
+            sid_to_dn[cache_sid_bytes] = dn
+
+        sid_to_dn[sid_bytes] = dn
+        return dn
+
+    # 1) Resolve targets: -tu / -tg / -tm (each can be comma-separated)
+    target_dns = []
+
+    if getattr(args, "target_users", None):
+        for raw in args.target_users.split(","):
+            name = raw.strip()
+            if not name:
+                continue
+            print(f"[DEBUG] resolving USER   = {name}")
+            resolved = resolve_single_principal(conn, base_dn, name, preferred_kind="USER")
+            if not resolved:
+                print(f"[ - ] USER '{name}' not found in domain (no sAMAccountName match)")
+                continue
+            dn, kind, sam = resolved
+            print(f"[DEBUG] USER resolved DN = {dn} (type={kind}, sam={sam})")
+            nodes.setdefault(dn, {"type": kind, "sam": sam})
+            target_dns.append(dn)
+
+    if getattr(args, "target_groups", None):
+        for raw in args.target_groups.split(","):
+            name = raw.strip()
+            if not name:
+                continue
+            print(f"[DEBUG] resolving GROUP  = {name}")
+            resolved = resolve_single_principal(conn, base_dn, name, preferred_kind="GROUP")
+            if not resolved:
+                print(f"[ - ] GROUP '{name}' not found in domain (no sAMAccountName match)")
+                continue
+            dn, kind, sam = resolved
+            print(f"[DEBUG] GROUP resolved DN= {dn} (type={kind}, sam={sam})")
+            nodes.setdefault(dn, {"type": kind, "sam": sam})
+            target_dns.append(dn)
+
+    if getattr(args, "target_machines", None):
+        for raw in args.target_machines.split(","):
+            name = raw.strip()
+            if not name:
+                continue
+            print(f"[DEBUG] resolving MACHINE= {name}")
+            resolved = resolve_single_principal(conn, base_dn, name, preferred_kind="MACHINE")
+            if not resolved:
+                print(f"[ - ] MACHINE '{name}' not found in domain (no sAMAccountName match)")
+                continue
+            dn, kind, sam = resolved
+            print(f"[DEBUG] MACHINE resolved = {dn} (type={kind}, sam={sam})")
+            nodes.setdefault(dn, {"type": kind, "sam": sam})
+            target_dns.append(dn)
+
+    print(f"[DEBUG] total target DNs   = {len(target_dns)}")
+    for tdn in target_dns:
+        print(f"[DEBUG] target DN         = {tdn}")
+    print()
+
+    if not target_dns:
+        print("[ - ] No valid target principals resolved (use -tu / -tg / -tm)")
+        return
+
+    # 2) For each target, fetch its DACL and list inbound rights
     sd_control = security_descriptor_control(sdflags=0x04)  # DACL only
 
     for tdn in target_dns:
         label = format_node(tdn)
         print(f"\n[ * ] Finding inbound ACL rights against {label}")
         print(f"      DN: {tdn}\n")
+
+        print("[DEBUG] requesting nTSecurityDescriptor (DACL only) for target\n")
 
         conn.search(
             search_base=tdn,
@@ -1186,6 +1211,7 @@ def findinboundacl(args):
             attributes=["nTSecurityDescriptor"],
             controls=sd_control,
         )
+
 
         if not conn.entries or "nTSecurityDescriptor" not in conn.entries[0]:
             print("    [ - ] No nTSecurityDescriptor returned (no DACL / insufficient rights?).")
@@ -1206,16 +1232,18 @@ def findinboundacl(args):
         dacl_offset, acl_size, ace_count = dacl_info
         ace_pos = dacl_offset + 8
 
-        inbound = defaultdict(list)  # trustee_dn -> [rights...]
+        inbound = {}  # trustee_dn -> set(rights)
 
         while ace_count > 0:
             if ace_pos + 4 > len(sd_bytes):
+                print("[DEBUG] ACE parsing break: insufficient bytes for ACE header")
                 break
 
             ace_type = sd_bytes[ace_pos]
             ace_size = struct.unpack_from("<H", sd_bytes, ace_pos + 2)[0]
 
             if ace_size <= 4 or ace_pos + ace_size > len(sd_bytes):
+                print("[DEBUG] ACE parsing break: invalid ace_size or truncated ACE")
                 break
 
             if ace_type not in (0, 5):  # ACCESS_ALLOWED_ACE, ACCESS_ALLOWED_OBJECT_ACE
@@ -1228,9 +1256,11 @@ def findinboundacl(args):
             sid_start = None
 
             if ace_type == 0:
+                # ACCESS_ALLOWED_ACE
                 access_mask = struct.unpack_from("<I", sd_bytes, ace_pos + 4)[0]
                 sid_start = ace_pos + 8
             elif ace_type == 5:
+                # ACCESS_ALLOWED_OBJECT_ACE
                 access_mask = struct.unpack_from("<I", sd_bytes, ace_pos + 4)[0]
                 obj_flags = struct.unpack_from("<I", sd_bytes, ace_pos + 8)[0]
                 cur = ace_pos + 12
@@ -1246,17 +1276,12 @@ def findinboundacl(args):
                 sid_start = cur
 
             if sid_start is None or sid_start >= len(sd_bytes):
+                print("[DEBUG] ACE parsing: invalid SID start, skipping ACE")
                 ace_pos += ace_size
                 ace_count -= 1
                 continue
 
             sid_bytes = sd_bytes[sid_start:ace_pos + ace_size]
-
-            trustee_dn = sid_to_dn.get(sid_bytes)
-            if not trustee_dn:
-                ace_pos += ace_size
-                ace_count -= 1
-                continue
 
             rights = decode_ace_rights(access_mask, object_type_guid_bytes)
             if not rights:
@@ -1264,7 +1289,15 @@ def findinboundacl(args):
                 ace_count -= 1
                 continue
 
-            inbound[trustee_dn].extend(rights)
+            trustee_dn = dn_for_sid_bytes(sid_bytes)
+            if not trustee_dn:
+                ace_pos += ace_size
+                ace_count -= 1
+                continue
+
+            if trustee_dn not in inbound:
+                inbound[trustee_dn] = set()
+            inbound[trustee_dn].update(rights)
 
             ace_pos += ace_size
             ace_count -= 1
@@ -1274,9 +1307,9 @@ def findinboundacl(args):
             continue
 
         print(f"=== Inbound ACL rights against {label} ===\n")
-        for trustee_dn, rights_list in inbound.items():
-            uniq_rights = sorted(set(rights_list))
-            print(f"{format_node(trustee_dn)} -> {','.join(uniq_rights)} -> {label}")
+        for trustee_dn, rights_set in sorted(inbound.items(), key=lambda x: format_node(x[0])):
+            rights_list = sorted(rights_set)
+            print(f"{format_node(trustee_dn)} -> {','.join(rights_list)} -> {label}")
         print()
 
 

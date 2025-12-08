@@ -132,89 +132,254 @@ def get_dacl_info(sd_bytes):
 
 # ---- helper: decode rights from mask + objectType GUID ----
 def decode_ace_rights(access_mask, object_type_guid_bytes):
-    GENERIC_ALL = 0x10000000
-    GENERIC_WRITE = 0x40000000
+    """
+    Decode access_mask + optional objectType GUID into human-readable rights.
 
-    WRITE_DAC = 0x00040000
-    WRITE_OWNER = 0x00080000
+    Covers:
+      - Generic & standard rights (GenericAll, GenericWrite, WriteDacl, WriteOwner, ...)
+      - DS-specific flags (ReadProperty, WriteProperty, Self, AllExtendedRights, ...)
+      - High-value extended rights (ResetPassword, DCSync, Validated-SPN, LAPS, ...)
+      - High-value attribute/object writes (RBCD, gMSA password, shadow creds, SPN, self-membership)
+    """
 
-    ADS_RIGHT_DS_CREATE_CHILD = 0x00000001
-    ADS_RIGHT_DS_DELETE_CHILD = 0x00000002
-    ADS_RIGHT_DS_SELF = 0x00000008
-    ADS_RIGHT_DS_READ_PROP = 0x00000010
-    ADS_RIGHT_DS_WRITE_PROP = 0x00000020
+    # ----- Generic rights -----
+    GENERIC_READ    = 0x80000000
+    GENERIC_WRITE   = 0x40000000
+    GENERIC_EXECUTE = 0x20000000
+    GENERIC_ALL     = 0x10000000
+
+    # ----- Standard rights -----
+    DELETE       = 0x00010000
+    READ_CONTROL = 0x00020000
+    WRITE_DAC    = 0x00040000
+    WRITE_OWNER  = 0x00080000
+
+    # ----- Directory-service specific rights -----
+    ADS_RIGHT_DS_CREATE_CHILD   = 0x00000001
+    ADS_RIGHT_DS_DELETE_CHILD   = 0x00000002
+    ADS_RIGHT_DS_LIST           = 0x00000004
+    ADS_RIGHT_DS_SELF           = 0x00000008
+    ADS_RIGHT_DS_READ_PROP      = 0x00000010
+    ADS_RIGHT_DS_WRITE_PROP     = 0x00000020
+    ADS_RIGHT_DS_LIST_OBJECT    = 0x00000080
     ADS_RIGHT_DS_CONTROL_ACCESS = 0x00000100
 
     rights = []
 
-    # generic
+    # ----- Generic / standard flags -----
     if access_mask & GENERIC_ALL:
         rights.append("GenericAll")
     if access_mask & GENERIC_WRITE:
         rights.append("GenericWrite")
+    if access_mask & GENERIC_READ:
+        rights.append("GenericRead")
+    if access_mask & GENERIC_EXECUTE:
+        rights.append("GenericExecute")
 
-    # standard
+    if access_mask & DELETE:
+        rights.append("Delete")
+    if access_mask & READ_CONTROL:
+        rights.append("ReadDacl")
     if access_mask & WRITE_DAC:
-        rights.append("WRITE_DAC")
+        rights.append("WriteDacl")
     if access_mask & WRITE_OWNER:
-        rights.append("WRITE_OWNER")
+        rights.append("WriteOwner")
 
-    # DS-specific
-    if access_mask & ADS_RIGHT_DS_SELF:
-        rights.append("SelfWrite")
-    if access_mask & ADS_RIGHT_DS_WRITE_PROP:
-        rights.append("WriteProperty")
+    # ----- DS-specific base flags -----
     if access_mask & ADS_RIGHT_DS_CREATE_CHILD:
         rights.append("CreateChild")
     if access_mask & ADS_RIGHT_DS_DELETE_CHILD:
         rights.append("DeleteChild")
+    if access_mask & ADS_RIGHT_DS_LIST:
+        rights.append("List")
+    if access_mask & ADS_RIGHT_DS_SELF:
+        rights.append("Self")
     if access_mask & ADS_RIGHT_DS_READ_PROP:
         rights.append("ReadProperty")
+    if access_mask & ADS_RIGHT_DS_WRITE_PROP:
+        rights.append("WriteProperty")
+    if access_mask & ADS_RIGHT_DS_LIST_OBJECT:
+        rights.append("ListObject")
+    if access_mask & ADS_RIGHT_DS_CONTROL_ACCESS:
+        rights.append("AllExtendedRights")
 
+    # Convert objectType GUID to string if present / non-null
     object_guid_str = None
-    if object_type_guid_bytes is not None:
+    if object_type_guid_bytes:
         try:
-            object_guid_str = str(uuid.UUID(bytes_le=object_type_guid_bytes)).lower()
+            if any(b != 0 for b in object_type_guid_bytes):
+                import uuid
+                object_guid_str = str(uuid.UUID(bytes_le=bytes(object_type_guid_bytes))).lower()
         except Exception:
             object_guid_str = None
 
-    # Extended rights (control access)
+    # ----- Extended rights (CONTROL_ACCESS with rightsGuid) -----
+    # These fire when ADS_RIGHT_DS_CONTROL_ACCESS is set AND the GUID matches.
     ext_rights_map = {
-        # Reset password
-        "00299570-246d-11d0-a768-00aa006e0529": ["ResetPassword"],
-        # Change password
-        "ab721a53-1e2f-11d0-9819-00aa0040529b": ["ChangePassword"],
-        # Replication / DCSync
-        "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2": ["DS-Replication-Get-Changes"],
-        "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2": ["DS-Replication-Get-Changes-All"],
-        "89e95b76-444d-4c62-991a-0facbeda640c": ["DS-Replication-Get-Changes-In-Filtered-Set"],
-        # Reanimate deleted objects
-        "45ec5156-db7e-47bb-b53f-dbeb2d03c40f": ["ReanimateTombstones"],
+        # Password reset / change
+        # User-Force-Change-Password (Reset Password)
+        "00299570-246d-11d0-a768-00aa006e0529": [
+            "ResetPassword",
+            "User-Force-Change-Password",
+        ],
+        # User-Change-Password
+        "ab721a53-1e2f-11d0-9819-00aa0040529b": [
+            "ChangePassword",
+            "User-Change-Password",
+        ],
+
+        # DCSync (replication rights) – these three together on the domain NC = full DCSync
+        "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2": [
+            "DS-Replication-Get-Changes",
+            "DCSync",
+        ],
+        "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2": [
+            "DS-Replication-Get-Changes-All",
+            "DCSync",
+        ],
+        "89e95b76-444d-4c62-991a-0facbeda640c": [
+            "DS-Replication-Get-Changes-In-Filtered-Set",
+            "DCSync",
+        ],
+
+        # Validated write to SPN (also connected to SPN abuses)
+        "f3a64788-5306-11d1-a9c5-0000f80367c1": [
+            "Validated-SPN",
+            "ValidatedWriteSPN",
+        ],
+
+        # Reanimate deleted schema objects
+        "45ec5156-db7e-47bb-b53f-dbeb2d03c40f": [
+            "Reanimate-Tombstones",
+        ],
+
+        # Windows LAPS (new) – extended right that guards encrypted LAPS password attributes
+        "f3531ec6-6330-4f8e-8d39-7a671fbac605": [
+            "LAPS-Encrypted-Password-Attributes",
+            "LAPS-ExtendedRight",
+        ],
+
+        # (Optional) “Write secret attributes” extended right – can be abused in some niche cases
+        "94825a8d-b171-4116-8146-1e34d8f54401": [
+            "WriteSecretAttributes",
+        ],
     }
 
-    # Attribute / validated writes
+    # ----- Attribute / object-specific writes (schemaIdGuid of attributes/classes) -----
+    # These fire when ADS_RIGHT_DS_WRITE_PROP and/or ADS_RIGHT_DS_SELF is set.
     attr_write_map = {
-        # servicePrincipalName validated write
-        "f3a64788-5306-11d1-a9c5-0000f80367c1": ["Validated-SPN", "WriteSPN"],
-        # msDS-AllowedToActOnBehalfOfOtherIdentity (RBCD)
-        "3f78c3e5-f79a-46bd-a0b8-9d18116ddc79": ["AllowedToAct"],
-        # msDS-GroupMSAMembership
-        "888eedd6-ce04-df40-b462-b8a50e41ba38": ["Write-msDS-GroupMSAMembership"],
-        # member (Self-Membership)
-        "bf9679c0-0de6-11d0-a285-00aa003049e2": ["Self-Membership"],
+        # member attribute -> group membership; can be used for self-membership / AddMember
+        # schemaIdGuid for "member" attribute
+        "bf9679c0-0de6-11d0-a285-00aa003049e2": [
+            "Write-member",
+            "AddMember",
+            "SelfMembership",
+        ],
+
+        # msDS-AllowedToActOnBehalfOfOtherIdentity (RBCD / resource-based constrained delegation)
+        "3f78c3e5-f79a-46bd-a0b8-9d18116ddc79": [
+            "Write-msDS-AllowedToActOnBehalfOfOtherIdentity",
+            "RBCD",
+        ],
+
+        # msDS-GroupMSAMembership (controls which principals can read gMSA password)
+        "888eedd6-ce04-df40-b462-b8a50e41ba38": [
+            "Write-msDS-GroupMSAMembership",
+            "ReadGMSAPassword",
+        ],
+
+        # msDS-KeyCredentialLink (shadow credentials / PKINIT abuse)
+        "5b47d60f-6090-40b2-9f37-2a4de88f3063": [
+            "Write-msDS-KeyCredentialLink",
+            "ShadowCredentials",
+        ],
+
+        # servicePrincipalName (attribute schemaIdGuid == f3a64788-...)
+        # Write access here = SPN abuse → Kerberoast / impersonation
+        "f3a64788-5306-11d1-a9c5-0000f80367c1": [
+            "Write-servicePrincipalName",
+            "WriteSPN",
+        ],
+
+        # You can add more schemaIdGuid mappings here if you want to go even deeper.
     }
 
-    if access_mask & ADS_RIGHT_DS_CONTROL_ACCESS:
-        rights.append("AllExtendedRights")
-        if object_guid_str and object_guid_str in ext_rights_map:
-            rights.extend(ext_rights_map[object_guid_str])
+    # ----- Apply GUID-based mappings -----
+    if object_guid_str:
+        # Extended rights
+        if access_mask & ADS_RIGHT_DS_CONTROL_ACCESS:
+            extra = ext_rights_map.get(object_guid_str)
+            if extra:
+                rights.extend(extra)
 
-    if object_guid_str and (access_mask & (ADS_RIGHT_DS_WRITE_PROP | ADS_RIGHT_DS_SELF)):
-        if object_guid_str in attr_write_map:
-            rights.extend(attr_write_map[object_guid_str])
+        # Attribute / object-specific writes
+        if access_mask & (ADS_RIGHT_DS_WRITE_PROP | ADS_RIGHT_DS_SELF):
+            extra = attr_write_map.get(object_guid_str)
+            if extra:
+                rights.extend(extra)
 
-    rights = sorted(set(rights))
-    return rights
+    # De-duplicate while preserving order
+    seen = set()
+    deduped = []
+    for r in rights:
+        if r not in seen:
+            deduped.append(r)
+            seen.add(r)
+
+    return deduped
+
+# --- helper:  generic target resolver ----
+def resolve_single_principal(conn, base_dn, name, preferred_kind="USER"):
+    """
+    Resolve one principal by sAMAccountName into (dn, kind, sam).
+
+    preferred_kind: "USER" / "GROUP" / "MACHINE" – we try that first,
+    but we fall back to "any kind" with that sAMAccountName.
+    """
+
+    if not name:
+        return None
+
+    upper_name = name.upper()
+
+    # 1) Try via cached name_index if present
+    # (if you don't have a global name_index, you can remove this section)
+    try:
+        name_index  # noqa
+        for k in (preferred_kind, "USER", "GROUP", "MACHINE"):
+            key = (k, upper_name)
+            dn = name_index.get(key)
+            if dn:
+                meta = nodes.get(dn, {"type": k, "sam": name})
+                return dn, meta["type"], meta.get("sam", name)
+    except NameError:
+        pass  # name_index / nodes not defined in this context, fall back to LDAP search
+
+    # 2) Direct LDAP search on sAMAccountName
+    user_filter = f"(sAMAccountName={name})"
+    conn.search(
+        search_base=base_dn,
+        search_filter=user_filter,
+        search_scope=SUBTREE,
+        attributes=["sAMAccountName", "objectClass"],
+    )
+
+    if not conn.entries:
+        return None
+
+    entry = conn.entries[0]
+    dn = entry.entry_dn
+    obj_classes = [c.lower() for c in entry["objectClass"].values] if "objectClass" in entry else []
+
+    if "group" in obj_classes:
+        kind = "GROUP"
+    elif "computer" in obj_classes:
+        kind = "MACHINE"
+    else:
+        kind = "USER"
+
+    sam = entry["sAMAccountName"].value if "sAMAccountName" in entry else name
+    return dn, kind, sam
 
 # ----  ----
 
@@ -629,29 +794,36 @@ def enumasreproastusers(args):
 
 def findinterestingacl(args):
     """
-    findinterestingacl (SINGLE target user):
+    findinterestingacl (SINGLE target principal):
       - Connect to AD
-      - Resolve target user (-tu) to SID
+      - Resolve target (-tu / -tg / -tm) to SID
       - Resolve all group SIDs via memberOf recursion (nested groups)
       - Scan objects' nTSecurityDescriptor DACLs (user/group/computer/gMSA/OU/domain/container)
-      - For ACEs whose trustee SID matches user SID OR any group SID:
+      - For ACEs whose trustee SID matches target SID OR any group SID:
           - Decode access mask + objectType GUID
-          - Map to high-level rights:
-            GenericAll, GenericWrite, WRITE_DAC, WRITE_OWNER, SelfWrite, WriteProperty,
-            CreateChild, DeleteChild, ReadProperty, AllExtendedRights, ResetPassword,
-            ChangePassword, DCSync rights, ReanimateTombstones, WriteSPN, AllowedToAct,
-            Write-msDS-GroupMSAMembership, Self-Membership, etc.
       - Output:
-          targetuser -> RightName -> DN1,DN2,...
+          target_sAM -> RightName -> DN1,DN2,...
     """
 
+    # ---- figure out which target option was used ----
 
+    target_name = None
+    target_kind = None  # "USER" / "GROUP" / "MACHINE" (for messages only)
 
-    # ---- main logic (single target user) ----
+    if getattr(args, "target_user", None):
+        target_name = args.target_user
+        target_kind = "USER"
+    elif getattr(args, "target_group", None):
+        target_name = args.target_group
+        target_kind = "GROUP"
+    elif getattr(args, "target_machine", None):
+        target_name = args.target_machine
+        target_kind = "MACHINE"
+    else:
+        print("[ - ] You must specify one of -tu / -tg / -tm.")
+        return
 
-    target_user = args.target_user  # e.g. "AB920" or "Administrator"
-
-    print("Finding interesting ACL-based rights for target user (including group-based)...\n")
+    print("Finding interesting ACL-based rights for target principal (including group-based)...\n")
 
     conn, netbios_domain = connect_to_ad(args.domain, args.dc, args.username, args.password)
     if conn is None:
@@ -663,10 +835,10 @@ def findinterestingacl(args):
         print("[ - ] Could not determine base DN from RootDSE")
         return
 
-    # 1) Resolve target user SID + groups via memberOf recursion
-    user_filter = f"(sAMAccountName={target_user})"
+    # 1) Resolve target principal SID + groups via memberOf recursion
+    user_filter = f"(sAMAccountName={target_name})"
     print(f"[DEBUG] base_dn      = {base_dn}")
-    print(f"[DEBUG] user_filter  = {user_filter}")
+    print(f"[DEBUG] principal_filter  = {user_filter}")
 
     conn.search(
         search_base=base_dn,
@@ -680,7 +852,7 @@ def findinterestingacl(args):
     print(f"[DEBUG] entries returned   = {len(conn.entries)}")
 
     if not conn.entries:
-        print(f"[ - ] Target user {target_user} not found in domain\n")
+        print(f"[ - ] Target {target_kind or 'principal'} {target_name} not found in domain\n")
         return
 
     user_entry = conn.entries[0]
@@ -690,12 +862,12 @@ def findinterestingacl(args):
     target_dn = user_entry.entry_dn
     sid_value = user_entry["objectSid"].value if "objectSid" in user_entry else None
     if sid_value is None:
-        print(f"[ - ] Target user {target_user} has no objectSid?\n")
+        print(f"[ - ] Target {target_name} has no objectSid?\n")
         return
 
     trustee_sids = set()
 
-    # user SID
+    # target SID
     if isinstance(sid_value, str):
         trustee_sids.add(sid_string_to_bytes(sid_value))
     else:
@@ -737,9 +909,11 @@ def findinterestingacl(args):
                 if parent_dn not in visited_dns:
                     queue.append(parent_dn)
 
-    print(f"[ * ] Target user: {netbios_domain}\\{target_user}")
+    target_sam = user_entry["sAMAccountName"].value if "sAMAccountName" in user_entry else target_name
+
+    print(f"[ * ] Target principal: {netbios_domain}\\{target_sam}")
     print(f"      DN  : {target_dn}")
-    print(f"      SIDs considered (user + groups): {len(trustee_sids)}\n")
+    print(f"      SIDs considered (principal + groups): {len(trustee_sids)}\n")
 
     rights_map = defaultdict(set)
 
@@ -790,7 +964,6 @@ def findinterestingacl(args):
             continue
 
         dacl_offset, acl_size, ace_count = dacl_info
-
         ace_pos = dacl_offset + 8  # skip ACL header
 
         for _ in range(ace_count):
@@ -854,17 +1027,257 @@ def findinterestingacl(args):
 
             ace_pos += ace_size
 
-    print(f"=== Interesting ACL rights for {netbios_domain}\\{target_user} ===\n")
+    print(f"=== Interesting ACL rights for {netbios_domain}\\{target_sam} ===\n")
 
     if not rights_map:
-        print(f"{target_user} -> None -> (no ACEs with interesting rights found)\n")
+        print(f"{target_sam} -> None -> (no ACEs with interesting rights found)\n")
         return
 
     for right_label in sorted(rights_map.keys()):
         dns = sorted(rights_map[right_label])
         dn_list = ",".join(dns) if dns else "None"
-        print(f"{target_user} -> {right_label} -> {dn_list}")
+        print(f"{target_sam} -> {right_label} -> {dn_list}")
     print()
+
+def findinboundacl(args):
+    """
+    findinboundacl:
+      Given one or more targets (-tu / -tg / -tm),
+      list who has interesting ACL rights *against* them.
+
+      Example:
+        adpeek.py findinboundacl -d inlanefreight.local -dc DC01 \
+          -u owneduser -p 'Pass' -tu CT059
+
+      Output (conceptually):
+        SOMEGROUP -> GenericAll,ResetPassword -> INLANEFREIGHT\\CT059
+    """
+
+    conn, netbios_domain = connect_to_ad(args.domain, args.dc, args.username, args.password)
+    if conn is None:
+        print(f"[ - ] Couldn't connect to {args.domain} using {args.username}:{args.password}")
+        return
+
+    base_dn = get_base_dn(conn)
+    if not base_dn:
+        print("[ - ] Could not determine base DN from RootDSE")
+        return
+
+    # 1) Build SID -> DN + minimal node metadata (user/group/machine)
+    from collections import defaultdict
+
+    sid_to_dn = {}
+    nodes = {}
+
+    principal_filter = "(|(objectClass=user)(objectClass=group)(objectClass=computer))"
+    conn.search(
+        search_base=base_dn,
+        search_filter=principal_filter,
+        search_scope=SUBTREE,
+        attributes=["sAMAccountName", "objectSid", "objectClass"],
+    )
+
+    for entry in conn.entries:
+        dn = entry.entry_dn
+        obj_classes = [c.lower() for c in entry["objectClass"].values] if "objectClass" in entry else []
+
+        if "group" in obj_classes:
+            kind = "GROUP"
+        elif "computer" in obj_classes:
+            kind = "MACHINE"
+        else:
+            kind = "USER"
+
+        sam = entry["sAMAccountName"].value if "sAMAccountName" in entry else None
+        nodes[dn] = {"type": kind, "sam": sam}
+
+        sid_val = entry["objectSid"].value if "objectSid" in entry else None
+        if sid_val is not None:
+            try:
+                sid_bytes = bytes(sid_val)
+            except TypeError:
+                try:
+                    sid_bytes = sid_string_to_bytes(sid_val)
+                except Exception:
+                    sid_bytes = None
+            if sid_bytes:
+                sid_to_dn[sid_bytes] = dn
+
+    # 2) Resolve targets: -tu / -tg / -tm (each can be comma-separated)
+    target_dns = []
+
+    if args.target_users:
+        for raw in args.target_users.split(","):
+            name = raw.strip()
+            if not name:
+                continue
+            resolved = resolve_single_principal(conn, base_dn, name, preferred_kind="USER")
+            if not resolved:
+                print(f"[ - ] USER '{name}' not found in domain (no sAMAccountName match)")
+                continue
+            dn, kind, sam = resolved
+            nodes.setdefault(dn, {"type": kind, "sam": sam})
+            target_dns.append(dn)
+
+    if args.target_groups:
+        for raw in args.target_groups.split(","):
+            name = raw.strip()
+            if not name:
+                continue
+            resolved = resolve_single_principal(conn, base_dn, name, preferred_kind="GROUP")
+            if not resolved:
+                print(f"[ - ] GROUP '{name}' not found in domain (no sAMAccountName match)")
+                continue
+            dn, kind, sam = resolved
+            nodes.setdefault(dn, {"type": kind, "sam": sam})
+            target_dns.append(dn)
+
+    if args.target_machines:
+        for raw in args.target_machines.split(","):
+            name = raw.strip()
+            if not name:
+                continue
+            resolved = resolve_single_principal(conn, base_dn, name, preferred_kind="MACHINE")
+            if not resolved:
+                print(f"[ - ] MACHINE '{name}' not found in domain (no sAMAccountName match)")
+                continue
+            dn, kind, sam = resolved
+            nodes.setdefault(dn, {"type": kind, "sam": sam})
+            target_dns.append(dn)
+
+    if not target_dns:
+        print("[ - ] No valid target principals resolved (use -tu / -tg / -tm)")
+        return
+
+    def format_node(dn):
+        meta = nodes.get(dn, {"type": "UNKNOWN", "sam": None})
+        kind = meta["type"]
+        sam = meta["sam"]
+        if kind == "USER":
+            if sam:
+                return f"{netbios_domain}\\{sam}"
+            return f"USER:{dn}"
+        elif kind == "GROUP":
+            if sam:
+                return f"GROUP:{sam}"
+            return f"GROUP:{dn}"
+        elif kind == "MACHINE":
+            if sam:
+                return f"{netbios_domain}\\{sam}"
+            return f"MACHINE:{dn}"
+        else:
+            return dn
+
+    # 3) For each target, fetch its DACL and list inbound rights
+    from ldap3 import SUBTREE
+    from ldap3.protocol.microsoft import security_descriptor_control
+
+    sd_control = security_descriptor_control(sdflags=0x04)  # DACL only
+
+    for tdn in target_dns:
+        label = format_node(tdn)
+        print(f"\n[ * ] Finding inbound ACL rights against {label}")
+        print(f"      DN: {tdn}\n")
+
+        conn.search(
+            search_base=tdn,
+            search_filter="(objectClass=*)",
+            search_scope="BASE",
+            attributes=["nTSecurityDescriptor"],
+            controls=sd_control,
+        )
+
+        if not conn.entries or "nTSecurityDescriptor" not in conn.entries[0]:
+            print("    [ - ] No nTSecurityDescriptor returned (no DACL / insufficient rights?).")
+            continue
+
+        sd_val = conn.entries[0]["nTSecurityDescriptor"].value
+        try:
+            sd_bytes = bytes(sd_val)
+        except TypeError:
+            print("    [ - ] Could not interpret security descriptor bytes.")
+            continue
+
+        dacl_info = get_dacl_info(sd_bytes)
+        if not dacl_info:
+            print("    [ - ] No DACL present or failed to parse.")
+            continue
+
+        dacl_offset, acl_size, ace_count = dacl_info
+        ace_pos = dacl_offset + 8
+
+        inbound = defaultdict(list)  # trustee_dn -> [rights...]
+
+        while ace_count > 0:
+            if ace_pos + 4 > len(sd_bytes):
+                break
+
+            ace_type = sd_bytes[ace_pos]
+            ace_size = struct.unpack_from("<H", sd_bytes, ace_pos + 2)[0]
+
+            if ace_size <= 4 or ace_pos + ace_size > len(sd_bytes):
+                break
+
+            if ace_type not in (0, 5):  # ACCESS_ALLOWED_ACE, ACCESS_ALLOWED_OBJECT_ACE
+                ace_pos += ace_size
+                ace_count -= 1
+                continue
+
+            access_mask = None
+            object_type_guid_bytes = None
+            sid_start = None
+
+            if ace_type == 0:
+                access_mask = struct.unpack_from("<I", sd_bytes, ace_pos + 4)[0]
+                sid_start = ace_pos + 8
+            elif ace_type == 5:
+                access_mask = struct.unpack_from("<I", sd_bytes, ace_pos + 4)[0]
+                obj_flags = struct.unpack_from("<I", sd_bytes, ace_pos + 8)[0]
+                cur = ace_pos + 12
+                ACE_OBJECT_TYPE_PRESENT = 0x1
+                ACE_INHERITED_OBJECT_TYPE_PRESENT = 0x2
+
+                if obj_flags & ACE_OBJECT_TYPE_PRESENT:
+                    object_type_guid_bytes = sd_bytes[cur:cur + 16]
+                    cur += 16
+                if obj_flags & ACE_INHERITED_OBJECT_TYPE_PRESENT:
+                    cur += 16
+
+                sid_start = cur
+
+            if sid_start is None or sid_start >= len(sd_bytes):
+                ace_pos += ace_size
+                ace_count -= 1
+                continue
+
+            sid_bytes = sd_bytes[sid_start:ace_pos + ace_size]
+
+            trustee_dn = sid_to_dn.get(sid_bytes)
+            if not trustee_dn:
+                ace_pos += ace_size
+                ace_count -= 1
+                continue
+
+            rights = decode_ace_rights(access_mask, object_type_guid_bytes)
+            if not rights:
+                ace_pos += ace_size
+                ace_count -= 1
+                continue
+
+            inbound[trustee_dn].extend(rights)
+
+            ace_pos += ace_size
+            ace_count -= 1
+
+        if not inbound:
+            print("    [ - ] No interesting inbound ACEs resolved (or no known principals as trustees).")
+            continue
+
+        print(f"=== Inbound ACL rights against {label} ===\n")
+        for trustee_dn, rights_list in inbound.items():
+            uniq_rights = sorted(set(rights_list))
+            print(f"{format_node(trustee_dn)} -> {','.join(uniq_rights)} -> {label}")
+        print()
 
 
 def build_parser():
@@ -1021,41 +1434,97 @@ def build_parser():
     )
     asrep.set_defaults(func=enumasreproastusers)
 
-    fia = subparsers.add_parser(
+    ii = subparsers.add_parser(
         "findinterestingacl",
-        help="Find objects whose nTSecurityDescriptor mentions the target user's SID.",
+        help="Find interesting ACL-based rights *from* a target user/group/machine to other objects.",
     )
-    fia.add_argument(
+    ii.add_argument(
         "-tu",
         "--target-user",
-        required=True,
-        help="Target user (sAMAccountName) whose SID to search for in ACLs.",
+        help="Target user (sAMAccountName).",
     )
-    fia.add_argument(
+    ii.add_argument(
+        "-tg",
+        "--target-group",
+        help="Target group (sAMAccountName).",
+    )
+    ii.add_argument(
+        "-tm",
+        "--target-machine",
+        help="Target machine (sAMAccountName, usually ending with $).",
+    )
+    ii.add_argument(
         "-d",
         "--domain",
         required=True,
-        help="AD domain, e.g. 'undeadbeef.local'.",
+        help="AD domain, e.g. 'inlanefreight.local'.",
     )
-    fia.add_argument(
+    ii.add_argument(
         "-dc",
         "--dc",
         required=True,
-        help="Domain controller hostname or IP, e.g. 'DC01.undeadbeef.local' or '172.16.7.3'.",
+        help="Domain controller hostname or IP.",
     )
-    fia.add_argument(
+    ii.add_argument(
         "-u",
         "--username",
         required=True,
         help="Owned username (without domain suffix).",
     )
-    fia.add_argument(
+    ii.add_argument(
         "-p",
         "--password",
         required=True,
         help="Password for owned username.",
     )
-    fia.set_defaults(func=findinterestingacl)
+    ii.set_defaults(func=findinterestingacl)
+
+
+    fi = subparsers.add_parser(
+        "findinboundacl",
+        help="Find principals who have ACL rights against a target user/group/machine.",
+    )
+    fi.add_argument(
+        "-tu",
+        "--target-users",
+        help="Comma-separated list of target users (sAMAccountName).",
+    )
+    fi.add_argument(
+        "-tg",
+        "--target-groups",
+        help="Comma-separated list of target groups (sAMAccountName).",
+    )
+    fi.add_argument(
+        "-tm",
+        "--target-machines",
+        help="Comma-separated list of target machines (sAMAccountName, usually ending with $).",
+    )
+    fi.add_argument(
+        "-d",
+        "--domain",
+        required=True,
+        help="AD domain, e.g. 'inlanefreight.local'.",
+    )
+    fi.add_argument(
+        "-dc",
+        "--dc",
+        required=True,
+        help="Domain controller hostname or IP, e.g. 'DC01.inlanefreight.local' or '172.16.7.3'.",
+    )
+    fi.add_argument(
+        "-u",
+        "--username",
+        required=True,
+        help="Owned username (without domain suffix).",
+    )
+    fi.add_argument(
+        "-p",
+        "--password",
+        required=True,
+        help="Password for owned username.",
+    )
+    fi.set_defaults(func=findinboundacl)
+
 
     return parser
 

@@ -2,7 +2,7 @@
 ![image](AdPeekIMG.png)
 
 ![PyPI](https://img.shields.io/pypi/v/adpeek-cli?label=pypi%20package)
-![PyPI - Downloads](https://img.shields.io/pypi/dm/adpeek-cli)
+
 
 AdPeek is a small Python tool for extracting useful information from Active Directory over LDAP.
 It focuses on fast enumeration and identifying misconfigured ACL paths without requiring a database or GUI (Poor man's bloodhound-ce).

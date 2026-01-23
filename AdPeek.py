@@ -12,7 +12,7 @@ import uuid
 from collections import defaultdict, deque
 import json
 
-BANNER = "AdPeek v0.1.2 - Brought to you by 0xUnd3adBeef\n"
+BANNER = "AdPeek v0.1.2 - Brought to you by 0xUnd3adBeef"
 print(BANNER)
 
 # ---------- general helpers ----------
@@ -227,7 +227,7 @@ def decode_ace_rights(access_mask, object_type_guid_bytes):
             "User-Change-Password",
         ],
 
-        # DCSync (replication rights) – these three together on the domain NC = full DCSync
+        # DCSync (replication rights)  these three together on the domain NC = full DCSync
         "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2": [
             "DS-Replication-Get-Changes",
             "DCSync",
@@ -252,13 +252,13 @@ def decode_ace_rights(access_mask, object_type_guid_bytes):
             "Reanimate-Tombstones",
         ],
 
-        # Windows LAPS (new) – extended right that guards encrypted LAPS password attributes
+        # Windows LAPS (new)  extended right that guards encrypted LAPS password attributes
         "f3531ec6-6330-4f8e-8d39-7a671fbac605": [
             "LAPS-Encrypted-Password-Attributes",
             "LAPS-ExtendedRight",
         ],
 
-        # (Optional) “Write secret attributes” extended right – can be abused in some niche cases
+        # (Optional) “Write secret attributes” extended right  can be abused in some niche cases
         "94825a8d-b171-4116-8146-1e34d8f54401": [
             "WriteSecretAttributes",
         ],
@@ -332,7 +332,7 @@ def resolve_single_principal(conn, base_dn, name, preferred_kind="USER"):
     """
     Resolve one principal by sAMAccountName into (dn, kind, sam).
 
-    preferred_kind: "USER" / "GROUP" / "MACHINE" – we try that first,
+    preferred_kind: "USER" / "GROUP" / "MACHINE"  we try that first,
     but we fall back to "any kind" with that sAMAccountName.
     """
 

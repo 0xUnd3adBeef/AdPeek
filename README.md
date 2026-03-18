@@ -1,125 +1,129 @@
 # AdPeek
+
 ![image](AdPeekIMG.png)
 
 ![PyPI](https://img.shields.io/pypi/v/adpeek-cli?label=pypi%20package)
 
+AdPeek is a Python tool for extracting useful information from Active Directory over LDAP.
 
-AdPeek is a small Python tool for extracting useful information from Active Directory over LDAP.
-It focuses on fast enumeration and identifying misconfigured ACL paths without requiring a database or GUI (Poor man's bloodhound-ce).
+It focuses on fast enumeration and identifying ACL-based privilege paths without requiring a database or UI.
 
-Current version: `v0.1.2`
-
----
-## Why AdPeek?
-
-AdPeek is built for operators who want quick, effective AD intelligence without dragging around heavy tooling. It delivers the essentials:\
-Fast LDAP enumeration of users, machines, SPNs, and AS-REP roastables\
-Direct ACL checks that show escalation paths like WriteDACL, WriteOwner, password-reset rights, RBCD, and Shadow Credentials\
-Inbound/outbound access checks to show who a target can control and who can control them\
-Output that’s short and immediately useful\
-AdPeek aims to keep things simple.
+**Current version:** `v0.1.2`
 
 ---
+
+## What it’s for
+
+AdPeek is built for quick AD visibility when you want usable results without setting up heavier tooling.
+
+* Fast LDAP enumeration
+* Direct ACL inspection
+* Inbound and outbound privilege visibility
+* Output that stays readable
+
+> [!TIP]
+> Useful as a first pass before switching to graph-based tools.
+
+---
+
 ## Features
 
-* Enumerate domain users
-* Enumerate domain machines
-* List SPN users (Kerberoastable)
-* List AS-REP roastable users
-* Check group membership
-* Identify interesting ACL-based privilege paths (WriteProperty, WriteOwner, WriteDACL, AllExtendedRights, etc.)
+### Enumeration
 
-Output is minimal and designed for quick consumption during reconnaissance.
+* Domain users
+* Domain machines
+* SPN users (Kerberoast targets)
+* AS-REP roastable users
+
+---
+
+### ACL Analysis
+
+* Outbound ACLs
+  What a user, group, or machine can control
+
+* Inbound ACLs (`findinboundacl`)
+  Who has rights over a target
+
+* Full ACE decoding including:
+
+  * WriteDACL, WriteOwner, WriteProperty
+  * AllExtendedRights
+  * Password reset rights
+  * DCSync-related rights
+  * RBCD
+  * Shadow Credentials
+  * GMSA password access
+  * SPN write access
+
+> [!TIP]
+> Inbound and outbound views together give a much clearer picture of privilege paths.
+
+---
+
+### Targeting
+
+* `-tu` user targets
+* `-tg` group targets
+* `-tm` machine targets
+
+---
+
+### Output
+
+* Minimal and readable
+* Deduplicated ACL results
+* Focus on high-impact rights
 
 ---
 
 ## Installation
 
-### **Using `pipx` (recommended)**
-
-`pipx` installs AdPeek in an isolated environment and exposes the `adpeek` command globally.
-
 ```bash
 pipx install adpeek-cli
 ```
 
-After installation, run:
-
-```bash
-adpeek --help
-```
+> [!TIP]
+> Keeps the tool isolated and avoids dependency issues.
 
 ---
 
-### **Using `pip` (not recommended, works too)**
-
-```bash
-python3 -m pip install --user adpeek-cli
-```
-
-Make sure `~/.local/bin` is on your PATH:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
----
-
-### **Upgrade to the latest version**
-
-```bash
-pipx upgrade adpeek-cli
-```
-
-or:
-
-```bash
-python3 -m pip install --upgrade adpeek-cli
-```
-
----
-
-### **Uninstall**
-
-```bash
-pipx uninstall adpeek-cli
-```
-
-or:
-
-```bash
-python3 -m pip uninstall adpeek-cli
-```
-
----
 ## Usage
 
-```
-./adpeek.py <command> [options]
-
-Options:
-    -dc <domain controller IP>
-    -d  <domain>
-    -u  <username>
-    -p  <password>
-    -tu <target user>         (for commands that require one)
+```bash
+adpeek <command> [options]
 ```
 
-Run the tool without arguments to display the command list.
+**Options**
+
+```
+-dc <domain controller IP>
+-d  <domain>
+-u  <username>
+-p  <password>
+-tu <target user>
+-tg <target group>
+-tm <target machine>
+```
+
+> [!WARNING]
+> Credentials are passed via CLI arguments. Be aware of shell history and process visibility.
 
 ---
 
-# Examples
+## Examples
 
----
+### Enumerating domain users
 
-## Enumerating domain users
+```bash
+adpeek enumdomusers -dc 10.10.10.10 -u AC001 -p Password123 -d xundeadbeef.local
+```
 
 ```
-$ ./adpeek.py enumdomusers -dc 10.10.10.10 -u AC001 -p Password123 -d xundeadbeef.local
-AdPeek v0.0.1dev - Made by 0xUnd3adBeef
+AdPeek v0.1.2
 
 Enumerating domain users...
+
 [ + ] - XUNDEADBEEF\Administrator - "CN=Administrator,CN=Users,DC=xundeadbeef,DC=local" - S-1-5-21-1000-1000-1000-500 - Enabled
 [ - ] - XUNDEADBEEF\Guest        - "CN=Guest,CN=Users,DC=xundeadbeef,DC=local"        - S-1-5-21-1000-1000-1000-501 - Disabled
 [ - ] - XUNDEADBEEF\krbtgt       - "CN=krbtgt,CN=Users,DC=xundeadbeef,DC=local"       - S-1-5-21-1000-1000-1000-502 - Disabled
@@ -130,39 +134,32 @@ Enumerating domain users...
 
 ---
 
-## Enumerating domain machines
+### Enumerating domain machines
+
+```bash
+adpeek enumdommachines -dc 10.10.10.10 -u AC001 -p Password123 -d xundeadbeef.local
+```
 
 ```
-$ ./adpeek.py enumdommachines -dc 10.10.10.10 -u AC001 -p Password123 -d xundeadbeef.local
-AdPeek v0.0.1dev - Made by 0xUnd3adBeef
+AdPeek v0.1.2
 
 Enumerating domain machines...
 
-[ + ] - XUNDEADBEEF\DC01$        - "CN=DC01,OU=Domain Controllers,DC=xundeadbeef,DC=local" - S-1-5-21-1000-1000-1000-1000
-[ + ] - XUNDEADBEEF\SQL01$       - "CN=SQL01,CN=Computers,DC=xundeadbeef,DC=local"         - S-1-5-21-1000-1000-1000-1103
-[ + ] - XUNDEADBEEF\WS-LAPTOP$   - "CN=WS-LAPTOP,CN=Computers,DC=xundeadbeef,DC=local"     - S-1-5-21-1000-1000-1000-1104
-[ + ] - XUNDEADBEEF\DEV-SRV01$   - "CN=DEV-SRV01,CN=Computers,DC=xundeadbeef,DC=local"     - S-1-5-21-1000-1000-1000-1105
+[ + ] - XUNDEADBEEF\DC01$      - "CN=DC01,OU=Domain Controllers,DC=xundeadbeef,DC=local" - S-1-5-21-1000-1000-1000-1000
+[ + ] - XUNDEADBEEF\SQL01$     - "CN=SQL01,CN=Computers,DC=xundeadbeef,DC=local"         - S-1-5-21-1000-1000-1000-1103
+[ + ] - XUNDEADBEEF\WS-LAPTOP$ - "CN=WS-LAPTOP,CN=Computers,DC=xundeadbeef,DC=local"     - S-1-5-21-1000-1000-1000-1104
+[ + ] - XUNDEADBEEF\DEV-SRV01$ - "CN=DEV-SRV01,CN=Computers,DC=xundeadbeef,DC=local"     - S-1-5-21-1000-1000-1000-1105
 ```
 
 ---
 
-## Checking group membership
+### Checking group membership
 
-### Regular user
-
-```
-$ ./adpeek.py checkgroup -tu CT059 -dc 10.10.10.10 -u AC001 -p Password123 -d xundeadbeef.local
-
-Checking groups for (CT059)
-[ - ] - XUNDEADBEEF\CT059 - "CN=CT059,CN=Users,DC=xundeadbeef,DC=local" - S-1-5-21-1000-1000-1000-4611
- -> None
+```bash
+adpeek checkgroup -tu Administrator -dc 10.10.10.10 -u AC001 -p Password123 -d xundeadbeef.local
 ```
 
-### Administrator
-
 ```
-$ ./adpeek.py checkgroup -tu Administrator -dc 10.10.10.10 -u AC001 -p Password123 -d xundeadbeef.local
-
 [ + ] - XUNDEADBEEF\Administrator - "CN=Administrator,CN=Users,DC=xundeadbeef,DC=local" - S-1-5-21-1000-1000-1000-500
  -> Group Policy Creator Owners
  -> Domain Admins
@@ -173,11 +170,14 @@ $ ./adpeek.py checkgroup -tu Administrator -dc 10.10.10.10 -u AC001 -p Password1
 
 ---
 
-## Finding interesting ACL rights
+### Outbound ACLs
+
+```bash
+adpeek findinterestingacl -tu CT059 -dc 10.10.10.10 -u AC001 -p Password123 -d xundeadbeef.local
+```
 
 ```
-$ ./adpeek.py findinterestingacl -tu CT059 -dc 10.10.10.10 -u AC001 -p Password123 -d xundeadbeef.local
-AdPeek v0.0.1dev - Made by 0xUnd3adBeef
+AdPeek v0.1.2
 
 Finding interesting ACL-based rights for target user (including group-based)...
 
@@ -195,13 +195,37 @@ CT059 -> WRITE_DAC         -> CN=Administrator,CN=Users,DC=xundeadbeef,DC=local
 CT059 -> WRITE_OWNER       -> CN=Administrator,CN=Users,DC=xundeadbeef,DC=local
 ```
 
+> [!IMPORTANT]
+> All privileges might not be shown !
+
 ---
 
-## SPN Users
+### Inbound ACLs (who controls the target)
 
 ```bash
-$ ./adpeek.py enumspnusers -dc 10.10.10.10 -u AC001 -p Password123 -d xundeadbeef.local
+adpeek findinboundacl -tu CT059 -dc 10.10.10.10 -u AC001 -p Password123 -d xundeadbeef.local
+```
 
+```
+AdPeek v0.1.2
+
+Finding inbound ACL-based rights...
+
+Target: XUNDEADBEEF\CT059
+
+Administrator -> GenericAll      -> CT059
+HELPDESK      -> ResetPassword   -> CT059
+```
+
+---
+
+### SPN users
+
+```bash
+adpeek enumspnusers -dc 10.10.10.10 -u AC001 -p Password123 -d xundeadbeef.local
+```
+
+```
 Enumerating SPN users...
 
 [ + ] XUNDEADBEEF\SQL02   - CN=SQL02,OU=Servers,DC=xundeadbeef,DC=local
@@ -213,11 +237,13 @@ Enumerating SPN users...
 
 ---
 
-## AS-REP Roastable Users
+### AS-REP roastable users
 
 ```bash
-$ ./adpeek.py enumasreproastusers -dc 10.10.10.10 -u AC001 -p Password123 -d xundeadbeef.local
+adpeek enumasreproastusers -dc 10.10.10.10 -u AC001 -p Password123 -d xundeadbeef.local
+```
 
+```
 Enumerating AS-REP roastable users...
 
 [ + ] XUNDEADBEEF\SRVBACKUP - CN=SRVBACKUP,OU=Service,DC=xundeadbeef,DC=local
@@ -226,15 +252,9 @@ Enumerating AS-REP roastable users...
 
 ---
 
-# Notes
+## Notes
 
-* AdPeek is in active development.
-* Output formats may change as functionality expands.
-* Intended for testing environments and research.
-
----
-
-# Author
-
-Created by **0xUnd3adBeef**
-If it breaks, you get to keep both pieces.
+> [!NOTE]
+>
+> * Active development
+> * Intended for testing and assessments
